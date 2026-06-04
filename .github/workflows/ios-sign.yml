@@ -31,7 +31,7 @@ jobs:
       - name: 构建 iOS (降级 image_cropper 解决 SPM 冲突)
         run: |
           # 降级 image_cropper 到 v11 (用 CocoaPods 而非 SPM)
-          sed -i 's/image_cropper:.*/image_cropper: ^11.0.0/' pubspec.yaml
+          python3 -c "import re; p='pubspec.yaml'; c=open(p).read(); c=re.sub(r'image_cropper:.*','image_cropper: ^11.0.0',c); open(p,'w').write(c)"
           flutter pub get
           flutter build ios --release --no-codesign
           cd build/ios/iphoneos
