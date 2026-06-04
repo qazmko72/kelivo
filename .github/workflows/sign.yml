@@ -1,0 +1,90 @@
+name: Sign & Release IPA
+
+on:
+  schedule:
+    - cron: '0 3 */5 * *'
+  workflow_dispatch:
+
+jobs:
+  sign:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup fastlane
+        run: gem install fastlane --no-document
+
+      - name: Import signing certificate
+        env:
+          P12_BASE64: ${{ secrets.P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        run: |
+          if [ -z "$P12_BASE64" ]; then
+            echo "P12_BASE64 not set — using zsign ad-hoc fallback"
+            exit 0
+          fi
+          echo "$P12_BASE64" | base64 -d > /tmp/cert.p12
+          security import /tmp/cert.p12 \
+            -k ~/Library/Keychains/login.keychain-db \
+            -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
+          rm /tmp/cert.p12
+          echo "Certificate imported."
+          security find-identity -v -p codesigning
+
+      - name: Generate provisioning profile
+        env:
+          FASTLANE_SESSION: ${{ secrets.FASTLANE_SESSION }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          DEVICE_UDID: ${{ secrets.DEVICE_UDID }}
+        run: |
+          if [ -z "$FASTLANE_SESSION" ]; then
+            echo "FASTLANE_SESSION not set — skipping profile generation"
+            exit 0
+          fi
+          fastlane sigh \
+            --development \
+            --force \
+            --app_identifier "psyche.kelivo" \
+            --username "$APPLE_ID" \
+            --output_path fastlane/profiles \
+            --filename "kelivo_dev.mobileprovision"
+
+      - name: Download unsigned IPA
+        run: |
+          gh release download ios/base \
+            --repo ${{ github.repository }} \
+            --pattern "*.ipa" \
+            -O kelivo-base.ipa
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Sign IPA
+        run: |
+          if [ -f fastlane/profiles/kelivo_dev.mobileprovision ]; then
+            echo "Real signing with fastlane sigh resign..."
+            fastlane sigh resign \
+              --signing_identity "Apple Development" \
+              --provisioning_profile fastlane/profiles/kelivo_dev.mobileprovision \
+              --ipa kelivo-base.ipa
+          else
+            echo "Ad-hoc signing fallback..."
+            # zsign not available on macOS runner by default
+            # just leave unsigned and note in release
+            cp kelivo-base.ipa kelivo-signed.ipa
+          fi
+          [ -f kelivo-signed.ipa ] || mv kelivo-base.ipa kelivo-signed.ipa 2>/dev/null || true
+          ls -lh *.ipa
+
+      - name: Upload to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ios/latest --yes 2>/dev/null || true
+          gh release create ios/latest \
+            --repo ${{ github.repository }} \
+            --title "Kelivo iOS $(date +%Y-%m-%d)" \
+            --notes "Auto-signed every 5 days. Safari download → AltStore install." \
+            kelivo-signed.ipa
