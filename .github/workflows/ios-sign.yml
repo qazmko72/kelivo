@@ -28,20 +28,33 @@ jobs:
         run: |
           VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - name: 升级 image_picker 解决 SPM 冲突
+      - name: 构建 IPA (跳过 SPM 解析)
+        env:
+          DISABLE_SPM_INTEGRATION: "true"
         run: |
-          # 升级 image_picker 到最新版，解决 tocropviewcontroller 版本冲突
-          flutter pub upgrade image_picker 2>&1 || true
-          flutter pub upgrade image_cropper 2>&1 || true
-      - name: Pod 安装 + 无签名构建
-        run: |
-          cd ios && pod install --repo-update 2>&1 | tail -10 && cd ..
-          flutter build ios --release --no-codesign
-          cd build/ios/iphoneos
+          # 先生成 Flutter framework + Dart AOT
+          flutter assemble ios-release 2>&1 | tail -5 || true
+
+          # Pod 安装
+          cd ios && pod install --repo-update 2>&1 | tail -5 && cd ..
+
+          # 用 xcodebuild 构建，跳过 SPM 包解析
+          xcodebuild -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/ios \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            -skipPackageUpdates 2>&1 | tail -20
+
+          # 打包 IPA
+          cd build/ios/Build/Products/Release-iphoneos
           mkdir -p Payload
           cp -r Runner.app Payload/
-          zip -r ../../../Kelivo_ios_${VERSION}.ipa Payload
-          cd ../../../
+          zip -r ../../../../../Kelivo_ios_${VERSION}.ipa Payload
+          cd ../../../../
       - name: 发布 Release（每 5 天自动续签）
         if: ${{ github.event_name == 'schedule' }}
         env:
