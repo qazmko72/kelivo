@@ -1,0 +1,67 @@
+name: iOS Build & Sign
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 */5 * *'
+
+jobs:
+  ios:
+    name: 构建 iOS 并签名
+    runs-on: macos-latest
+    permissions: write-all
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          cache: true
+      - run: |
+          mkdir -p lib/secrets
+          cat > lib/secrets/fallback.dart <<'EOF'
+          const String siliconflowFallbackKey = '${{ secrets.SILICONFLOW_KEY }}';
+          EOF
+      - name: 获取版本号
+        id: version
+        run: |
+          VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+      - name: 构建 iOS (免费证书自动签名)
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+        run: |
+          # 清除旧 Development Team 设置，让 Xcode 自动用免费证书
+          python3 -c "
+import re
+with open('ios/Runner.xcodeproj/project.pbxproj') as f:
+    c = f.read()
+c = re.sub(r'(DEVELOPMENT_TEAM\s*=\s*)[^;]+;', r'\1;', c)
+with open('ios/Runner.xcodeproj/project.pbxproj', 'w') as f:
+    f.write(c)
+"
+          gem install fastlane --no-document 2>&1 | tail -1
+          fastlane spaceauth -u "$APPLE_ID" 2>&1 || true
+          flutter build ios --release
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r ../../../Kelivo_ios_${VERSION}.ipa Payload
+          cd ../../../
+      - name: 发布 Release（每 5 天自动续签）
+        if: ${{ github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ios/latest --cleanup-tag --yes 2>/dev/null || true
+          gh release create ios/latest \
+            --title "Kelivo iOS (自动续签)" \
+            --notes "每 5 天自动构建+签名。手机 Safari 打开此页面 → 下载 IPA → 设置里信任 → 安装" \
+            Kelivo_ios_*.ipa
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-IPA
+          path: Kelivo_ios_*.ipa
