@@ -188,22 +188,20 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
-          # 配置项目
-          cd ios
-          sed -i '' 's/\(DEVELOPMENT_TEAM =\) [^;]*;/\1 ;/g' Runner.xcodeproj/project.pbxproj
-          cd ..
-
-          # 用 fastlane 认证 Apple ID（自动存钥匙链）
+          # 用 Python 安全清空旧 Team ID（避免 sed -i 破坏 pbxproj 格式）
+          python3 -c "
+import re
+with open('ios/Runner.xcodeproj/project.pbxproj', 'r') as f:
+    c = f.read()
+c = re.sub(r'(DEVELOPMENT_TEAM\\s*=\\s*)[^;]+;', r'\\1;', c)
+with open('ios/Runner.xcodeproj/project.pbxproj', 'w') as f:
+    f.write(c)
+"
+          # fastlane 认证（FASTLANE_PASSWORD env var 自动读取）
           gem install fastlane --no-document 2>&1 | tail -1
           fastlane spaceauth -u "$APPLE_ID" 2>&1 || true
 
-          # 触发自动 provisioning
-          xcodebuild -workspace ios/Runner.xcworkspace \
-            -scheme Runner -configuration Release \
-            -sdk iphoneos -destination 'generic/platform=iOS' \
-            -allowProvisioningUpdates build 2>&1 | tail -10 || true
-
-          # Flutter 正式构建
+          # Flutter 构建（自动签名）
           flutter build ios --release
 
           # 打包 IPA
