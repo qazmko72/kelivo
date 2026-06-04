@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.27.0'
+          channel: master
           cache: true
       - run: |
           mkdir -p lib/secrets
@@ -28,15 +28,17 @@ jobs:
         run: |
           VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - name: 构建 iOS
-        env:
-          FLUTTER_XCODE_BUILD_SETTINGS: "-skipPackageUpdates"
+      - name: 构建 iOS (降级 image_cropper 解决 SPM 冲突)
         run: |
+          # 降级 image_cropper 到 v11 (用 CocoaPods 而非 SPM)
+          sed -i 's/image_cropper:.*/image_cropper: ^11.0.0/' pubspec.yaml
+          flutter pub get
           flutter build ios --release --no-codesign
           cd build/ios/iphoneos
           mkdir Payload
           cp -r Runner.app Payload/
           zip -r ../../../Kelivo_ios_${VERSION}.ipa Payload
+          cd ../../../
       - name: 发布 Release（每 5 天自动续签）
         if: ${{ github.event_name == 'schedule' }}
         env:
