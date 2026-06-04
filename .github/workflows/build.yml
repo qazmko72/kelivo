@@ -53,6 +53,10 @@ on:
         default: ''
         type: string
 
+  # 定时自动构建 iOS（每 5 天续签一次）
+  schedule:
+    - cron: '0 0 */5 * *'
+
 jobs:
   # Android 构建
   android:
@@ -147,7 +151,7 @@ jobs:
 
   # iOS 构建
   ios:
-    if: ${{ github.event.inputs.build_ios == 'true' }}
+    if: ${{ github.event_name == 'schedule' || github.event.inputs.build_ios == 'true' }}
     name: 构建 iOS
     runs-on: macos-latest
     permissions: write-all
@@ -179,15 +183,43 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "版本号: $VERSION"
 
-      - name: 🏗️ 构建 iOS (无签名)
+      - name: 🔑 Apple ID 认证 (自动签名)
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
-          flutter build ios --release --no-codesign
+          gem install fastlane --no-document 2>&1 | tail -3
+          echo "$APPLE_ID_PASSWORD" | fastlane spaceauth -u "$APPLE_ID" 2>&1
+
+      - name: 🏗️ 构建 iOS (自动签名)
+        run: |
+          # 清空旧 Team ID，让 Xcode 用 Apple ID 的免费 team
+          cd ios
+          sed -i '' 's/\(DEVELOPMENT_TEAM =\) [^;]*;/\1 ;/g' Runner.xcodeproj/project.pbxproj
+          cd ..
+
+          # 构建（Xcode 自动创建临时证书 + 描述文件）
+          flutter build ios --release
+
+          # 打包 IPA
           cd build/ios/iphoneos
-          mkdir Payload
+          mkdir -p Payload
           cp -r Runner.app Payload/
           zip -r ../../../Kelivo_ios_${VERSION}.ipa Payload
+          cd ../../../
 
-      - name: 🚀 发布到 Release
+      - name: 📲 自动发布 (iOS 每5天续签)
+        if: ${{ github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ios/latest --cleanup-tag --yes 2>/dev/null || true
+          gh release create ios/latest \
+            --title "Kelivo iOS (自动续签)" \
+            --notes "每 5 天自动构建+签名。手机 Safari 打开此页面 → 下载 IPA → 设置里信任 → 安装" \
+            Kelivo_ios_*.ipa
+
+      - name: 🚀 发布到 Release（手动触发）
         if: ${{ github.event.inputs.publish_release == 'true' && github.event.inputs.release_tag != '' }}
         uses: softprops/action-gh-release@v2
         with:
@@ -407,10 +439,10 @@ jobs:
           [Run]
           Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
           "@
-          
+
           # 使用 UTF-8 BOM 以确保中文字符在 Inno Setup 中正确解析
           $issContent | Out-File -FilePath "installer.iss" -Encoding utf8BOM
-          
+
           # 编译安装程序
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer.iss"
 
@@ -492,13 +524,13 @@ jobs:
           # 下载 appimagetool
           wget -O appimagetool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
           chmod +x appimagetool
-          
+
           # 创建 AppDir 结构
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/lib
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
           cp -r build/linux/x64/release/bundle/* AppDir/usr/bin/
-          
+
           # 创建 AppRun 脚本
           cat > AppDir/AppRun << 'EOF'
           #!/bin/bash
@@ -509,7 +541,7 @@ jobs:
           exec "${HERE}/usr/bin/kelivo" "$@"
           EOF
           chmod +x AppDir/AppRun
-          
+
           # 创建 desktop 文件
           cat > AppDir/kelivo.desktop << EOF
           [Desktop Entry]
@@ -519,7 +551,7 @@ jobs:
           Type=Application
           Categories=Utility;
           EOF
-          
+
           ICON_SOURCE="linux/kelivo.png"
           if [ ! -f "$ICON_SOURCE" ]; then
             ICON_SOURCE="assets/app_icon.png"
@@ -530,7 +562,7 @@ jobs:
           fi
           install -Dm644 "$ICON_SOURCE" AppDir/kelivo.png
           install -Dm644 "$ICON_SOURCE" "AppDir/usr/share/icons/hicolor/256x256/apps/kelivo.png"
-          
+
           # 构建 AppImage
           ARCH=x86_64 ./appimagetool AppDir Kelivo_linux_${VERSION}.AppImage
 
@@ -541,14 +573,14 @@ jobs:
           mkdir -p deb/opt/kelivo
           mkdir -p deb/usr/share/applications
           mkdir -p deb/usr/share/icons/hicolor/256x256/apps
-          
+
           # 复制文件
           cp -r build/linux/x64/release/bundle/* deb/opt/kelivo/
-          
+
           # 创建 /usr/bin 软链接
           mkdir -p deb/usr/bin
           ln -s /opt/kelivo/kelivo deb/usr/bin/kelivo
-          
+
           # 创建 control 文件
           cat > deb/DEBIAN/control << EOF
           Package: kelivo
@@ -561,7 +593,7 @@ jobs:
           Description: Kelivo Application
            A Flutter application for Linux
           EOF
-          
+
           # 创建 desktop 文件
           cat > deb/usr/share/applications/kelivo.desktop << EOF
           [Desktop Entry]
@@ -581,7 +613,7 @@ jobs:
             exit 1
           fi
           install -Dm644 "$ICON_SOURCE" deb/usr/share/icons/hicolor/256x256/apps/kelivo.png
-          
+
           # 创建启动脚本
           cat > deb/opt/kelivo/kelivo.sh << 'EOF'
           #!/bin/bash
@@ -589,14 +621,14 @@ jobs:
           ./kelivo "$@"
           EOF
           chmod +x deb/opt/kelivo/kelivo.sh
-          
+
           # 构建 DEB 包
           dpkg-deb --build deb Kelivo_linux_${VERSION}_amd64.deb
       - name: 📦 创建 RPM 包
         run: |
           # 创建 RPM 构建目录
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          
+
           # 创建源码目录
           mkdir -p kelivo-${VERSION_NUMBER}
           cp -r build/linux/x64/release/bundle/* kelivo-${VERSION_NUMBER}/
@@ -610,7 +642,7 @@ jobs:
           fi
           cp "$ICON_SOURCE" kelivo-${VERSION_NUMBER}/kelivo.png
           tar -czf ~/rpmbuild/SOURCES/kelivo-${VERSION_NUMBER}.tar.gz kelivo-${VERSION_NUMBER}
-          
+
           # 创建 spec 文件
           cat > ~/rpmbuild/SPECS/kelivo.spec << EOF
           Name:           kelivo
@@ -621,20 +653,20 @@ jobs:
           Source0:        %{name}-%{version}.tar.gz
           BuildArch:      x86_64
           Requires:       gtk3, libstdc++ >= 6, mesa-libGLU, gstreamer1, gstreamer1-plugins-base, glib2, glibc
-          
+
           %description
           A Flutter application for Linux
-          
+
           %prep
           %setup -q
-          
+
           %install
           mkdir -p %{buildroot}/opt/kelivo
           cp -r * %{buildroot}/opt/kelivo/
-          
+
           mkdir -p %{buildroot}/usr/bin
           ln -s /opt/kelivo/kelivo %{buildroot}/usr/bin/kelivo
-          
+
           mkdir -p %{buildroot}/usr/share/applications
           cat > %{buildroot}/usr/share/applications/kelivo.desktop << 'DESKTOPEOF'
           [Desktop Entry]
@@ -647,18 +679,18 @@ jobs:
 
           mkdir -p %{buildroot}/usr/share/icons/hicolor/256x256/apps
           cp kelivo.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/kelivo.png
-          
+
           %files
           /opt/kelivo/*
           /usr/bin/kelivo
           /usr/share/applications/kelivo.desktop
           /usr/share/icons/hicolor/256x256/apps/kelivo.png
-          
+
           %changelog
           * $(date "+%a %b %d %Y") Psyche <your@email.com> - ${VERSION_NUMBER}-1
           - Initial RPM release
           EOF
-          
+
           # 构建 RPM
           rpmbuild -bb ~/rpmbuild/SPECS/kelivo.spec
           cp ~/rpmbuild/RPMS/x86_64/kelivo-${VERSION_NUMBER}-1.*.rpm Kelivo_linux_${VERSION}.rpm
