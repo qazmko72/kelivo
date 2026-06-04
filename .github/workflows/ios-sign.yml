@@ -28,31 +28,32 @@ jobs:
         run: |
           VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - name: 构建 + 签名 IPA
+      - name: 构建 IPA (先无签名，再回落)
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
-          # 降级 image_cropper 避免 SPM 冲突
+          set +e
           python3 -c "import re;p='pubspec.yaml';c=open(p).read();c=re.sub(r'image_cropper:.*','image_cropper: ^11.0.0',c);open(p,'w').write(c)"
           flutter pub get
-          # 清除旧 Development Team
           python3 -c "import re;p='ios/Runner.xcodeproj/project.pbxproj';c=open(p).read();c=re.sub(r\"(DEVELOPMENT_TEAM\s*=\s*)[^;]+;\",r'\1;',c);open(p,'w').write(c)"
-          # fastlane 认证
           gem install fastlane --no-document 2>&1 | tail -1
           fastlane spaceauth -u "$APPLE_ID" 2>&1 || true
-          # flutter build ipa (自带签名)
-          flutter build ipa --release 2>&1 | tail -20
-          # 复制产物
-          cp build/ios/ipa/*.ipa Kelivo_ios_${VERSION}.ipa 2>/dev/null || {
-            echo "build ipa 失败，回落为无签名"
+          flutter build ipa --release 2>&1 | tail -5
+          ls build/ios/ipa/*.ipa 2>/dev/null
+          if [ $? -eq 0 ]; then
+            cp build/ios/ipa/*.ipa Kelivo_ios_${VERSION}.ipa
+            echo "SIGNED IPA OK"
+          else
+            echo "SIGNING FAILED, fallback to unsigned"
             flutter build ios --release --no-codesign
             cd build/ios/iphoneos
             mkdir -p Payload
             cp -r Runner.app Payload/
             zip -r ../../../Kelivo_ios_${VERSION}.ipa Payload
             cd ../../../
-          }
+          fi
+          set -e
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
