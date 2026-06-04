@@ -21,6 +21,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
+          unset FASTLANE_SESSION 2>/dev/null || true
+          export FASTLANE_PASSWORD="$APPLE_ID_PASSWORD"
           export FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD="$APPLE_ID_PASSWORD"
 
           if [ -n "${{ inputs.sms_code }}" ]; then
@@ -39,6 +41,8 @@ jobs:
             # 第1次运行：触发短信（macOS 没有 timeout 命令）
             echo "📱 正在触发 Apple 2FA 短信..."
             echo "   APPLE_ID: $APPLE_ID"
+            # 设 FASTLANE_PASSWORD 避免非交互式 shell 报错
+            export FASTLANE_PASSWORD="$APPLE_ID_PASSWORD"
             # 后台跑 spaceauth，等 20 秒后杀掉
             fastlane spaceauth -u "$APPLE_ID" 2>&1 &
             SPACE_PID=$!
