@@ -183,23 +183,33 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "版本号: $VERSION"
 
-      - name: 🔑 Apple ID 认证 (自动签名)
+      - name: 🔑 配置 Apple ID 签名
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
-          gem install fastlane --no-document 2>&1 | tail -3
-          echo "$APPLE_ID_PASSWORD" | fastlane spaceauth -u "$APPLE_ID" 2>&1
+          # 创建临时钥匙链，存储 Apple ID 凭证给 Xcode
+          security create-keychain -p temp /tmp/ci.keychain 2>/dev/null || true
+          security unlock-keychain -p temp /tmp/ci.keychain
+          security set-keychain-settings -lut 3600 /tmp/ci.keychain
+          security list-keychains -s /tmp/ci.keychain
+          security default-keychain -s /tmp/ci.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k temp /tmp/ci.keychain
 
-      - name: 🏗️ 构建 iOS (自动签名)
+          # 用 altool 存凭证到钥匙链
+          xcrun altool --store-password-in-keychain-item "CI_APPLE_ID" \
+            -u "$APPLE_ID" -p "$APPLE_ID_PASSWORD" 2>&1 || true
+
+      - name: 🏗️ 构建 iOS
         run: |
-          # 清空旧 Team ID，让 Xcode 用 Apple ID 的免费 team
+          # 配置项目
           cd ios
           sed -i '' 's/\(DEVELOPMENT_TEAM =\) [^;]*;/\1 ;/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/\(PRODUCT_BUNDLE_IDENTIFIER =\) kelivo;/\1 com.qazmko72.kelivo;/g' Runner.xcodeproj/project.pbxproj
           cd ..
 
-          # 构建（Xcode 自动创建临时证书 + 描述文件）
-          flutter build ios --release
+          # Flutter 构建（xcodebuild 自动用钥匙链里的凭证签名）
+          flutter build ios --release 2>&1
 
           # 打包 IPA
           cd build/ios/iphoneos
