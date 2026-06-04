@@ -25,7 +25,7 @@ jobs:
 
           if [ -n "${{ inputs.sms_code }}" ]; then
             # 第2次运行：有验证码了
-            sudo apt-get install -y expect -qq
+            brew install expect 2>/dev/null || true
             expect -c "
               spawn fastlane spaceauth -u ${{ secrets.APPLE_ID }}
               expect -re {[Cc]ode|[Ss]MS|[Tt]wo.?[Ff]actor}
@@ -36,10 +36,14 @@ jobs:
             grep -o "----.*----" /tmp/session_output.txt 2>/dev/null || \
               sed -n '/export FASTLANE_SESSION/,/----/p' /tmp/session_output.txt
           else
-            # 第1次运行：触发短信
+            # 第1次运行：触发短信（macOS 没有 timeout 命令）
             echo "📱 正在触发 Apple 2FA 短信..."
             echo "   APPLE_ID: $APPLE_ID"
-            timeout 30 fastlane spaceauth -u "$APPLE_ID" 2>&1 || true
+            # 后台跑 spaceauth，等 20 秒后杀掉
+            fastlane spaceauth -u "$APPLE_ID" 2>&1 &
+            SPACE_PID=$!
+            sleep 20
+            kill $SPACE_PID 2>/dev/null || true
             echo "=== 下一步 ==="
             echo "看到手机上收到验证码了吗？"
             echo "去 GitHub → Actions → 重新运行这个 workflow"
