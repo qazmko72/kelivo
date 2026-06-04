@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
       - uses: subosito/flutter-action@v2
         with:
-          channel: master
+          channel: stable
           cache: true
       - run: |
           mkdir -p lib/secrets
@@ -37,18 +37,30 @@ jobs:
           c = re.sub(r'image_cropper:.*', 'image_cropper: ^11.0.0', c)
           open(p, 'w').write(c)
           "
-      - name: 构建
+      - name: 构建 + 签名 IPA
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
+          set +e
           flutter pub get
-          flutter build ios --release --no-codesign
-      - name: 打包 IPA
-        run: |
+          python3 scripts/clear_development_team.py ios/Runner.xcodeproj/project.pbxproj
+          gem install fastlane --no-document 2>&1 | tail -1
+          fastlane spaceauth -u "$APPLE_ID" 2>&1
+          SPACEAUTH_EXIT=$?
+          if [ $SPACEAUTH_EXIT -eq 0 ]; then
+            echo "fastlane auth OK, building signed IPA"
+            flutter build ios --release
+          else
+            echo "fastlane auth failed ($SPACEAUTH_EXIT), building unsigned"
+            flutter build ios --release --no-codesign
+          fi
           cd build/ios/iphoneos
           mkdir -p Payload
           cp -r Runner.app Payload/
           zip -r ../../../Kelivo_ios_${VERSION}.ipa Payload
           cd ../../../
-
+          ls -la Kelivo_ios_*.ipa
       - uses: actions/upload-artifact@v4
         with:
           name: iOS-IPA

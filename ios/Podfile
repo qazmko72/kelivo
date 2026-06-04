@@ -32,6 +32,9 @@ flutter_ios_podfile_setup
 target 'Runner' do
   use_frameworks!
 
+  # 强制 TOCropViewController 版本，解决 SPM 依赖冲突
+  pod 'TOCropViewController', '3.0.0'
+
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths
