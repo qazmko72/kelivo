@@ -305,8 +305,9 @@ class MessageBuilderService {
   Future<List<String>> processUserMessagesForApi(
     List<Map<String, dynamic>> apiMessages,
     SettingsProvider settings,
-    Assistant? assistant,
-  ) async {
+    Assistant? assistant, {
+    DateTime? stableTimestamp,
+  }) async {
     final bool ocrActive =
         settings.ocrEnabled &&
         settings.ocrModelProvider != null &&
@@ -480,7 +481,7 @@ class MessageBuilderService {
         templ,
         role: 'user',
         message: userText,
-        now: DateTime.now(),
+        now: stableTimestamp ?? DateTime.now(),
       );
       apiMessages[lastUserIdx]['content'] = templated;
     }
@@ -505,8 +506,9 @@ class MessageBuilderService {
   void injectSystemPrompt(
     List<Map<String, dynamic>> apiMessages,
     Assistant? assistant,
-    String modelId,
-  ) {
+    String modelId, {
+    DateTime? stableTimestamp,
+  }) {
     if ((assistant?.systemPrompt.trim().isNotEmpty ?? false)) {
       final vars = PromptTransformer.buildPlaceholders(
         context: contextProvider,
@@ -514,6 +516,7 @@ class MessageBuilderService {
         modelId: modelId,
         modelName: modelId,
         userNickname: contextProvider.read<UserProvider>().name,
+        now: stableTimestamp,
       );
       final sys = PromptTransformer.replacePlaceholders(
         assistant.systemPrompt,
@@ -528,13 +531,14 @@ class MessageBuilderService {
     List<Map<String, dynamic>> apiMessages,
     Assistant? assistant, {
     String? currentConversationId,
+    DateTime? stableTimestamp,
   }) async {
     try {
       if (assistant?.enableMemory == true) {
         final mp = contextProvider.read<MemoryProvider>();
         await mp.initialize();
         final mems = mp.getForAssistant(assistant!.id);
-        final currentHour = _formatCurrentHour(DateTime.now());
+        final currentHour = _formatCurrentHour(stableTimestamp ?? DateTime.now());
         final buf = StringBuffer();
         buf.writeln('## Memories');
         buf.writeln(

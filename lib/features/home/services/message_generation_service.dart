@@ -131,6 +131,9 @@ class MessageGenerationService {
       ProviderKind.openai || ProviderKind.claude || ProviderKind.google => true,
     };
 
+    // Freeze timestamp at conversation creation time for prompt cache stability.
+    final stableTimestamp = currentConversation?.createdAt ?? DateTime.now();
+
     onFileProcessingStarted?.call();
 
     // Build API messages
@@ -159,17 +162,18 @@ class MessageGenerationService {
 
     // Process user messages (documents, OCR, templates)
     final lastUserImagePaths = await messageBuilderService
-        .processUserMessagesForApi(apiMessages, settings, assistant);
+        .processUserMessagesForApi(apiMessages, settings, assistant, stableTimestamp: stableTimestamp);
 
     // Signal processing finished
     onFileProcessingFinished?.call();
 
     // Inject prompts
-    messageBuilderService.injectSystemPrompt(apiMessages, assistant, modelId);
+    messageBuilderService.injectSystemPrompt(apiMessages, assistant, modelId, stableTimestamp: stableTimestamp);
     await messageBuilderService.injectMemoryAndRecentChats(
       apiMessages,
       assistant,
       currentConversationId: currentConversation?.id,
+      stableTimestamp: stableTimestamp,
     );
 
     final hasBuiltInSearch = messageBuilderService.hasBuiltInSearch(
