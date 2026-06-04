@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          channel: master
           cache: true
       - run: |
           mkdir -p lib/secrets
@@ -28,20 +28,28 @@ jobs:
         run: |
           VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - name: 构建 IPA
+      - name: 降级 image_cropper
         run: |
-          python3 -c "import re;p='pubspec.yaml';c=open(p).read();c=re.sub(r'image_cropper:.*','image_cropper: ^11.0.0',c);open(p,'w').write(c)"
+          python3 -c "
+          import re
+          p = 'pubspec.yaml'
+          c = open(p).read()
+          c = re.sub(r'image_cropper:.*', 'image_cropper: ^11.0.0', c)
+          open(p, 'w').write(c)
+          "
+      - name: 构建
+        run: |
           flutter pub get
-          python3 -c "import re;p='ios/Runner.xcodeproj/project.pbxproj';c=open(p).read();c=re.sub(r\"(DEVELOPMENT_TEAM\s*=\s*)[^;]+;\",r'\1;',c);open(p,'w').write(c)"
           flutter build ios --release --no-codesign
+      - name: 打包 IPA
+        run: |
           cd build/ios/iphoneos
           mkdir -p Payload
           cp -r Runner.app Payload/
           zip -r ../../../Kelivo_ios_${VERSION}.ipa Payload
           cd ../../../
-          ls -la Kelivo_ios_*.ipa
-      - name: 上传产物
-        uses: actions/upload-artifact@v4
+
+      - uses: actions/upload-artifact@v4
         with:
           name: iOS-IPA
           path: Kelivo_ios_*.ipa
