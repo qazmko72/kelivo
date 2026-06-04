@@ -1,0 +1,48 @@
+name: Get FASTLANE_SESSION
+
+on:
+  workflow_dispatch:
+    inputs:
+      sms_code:
+        description: '2FA code from your phone SMS'
+        required: false
+        default: ''
+
+jobs:
+  auth:
+    runs-on: macos-latest
+    steps:
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      - name: Generate session
+        id: session
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+        run: |
+          export FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD="$APPLE_ID_PASSWORD"
+
+          if [ -n "${{ inputs.sms_code }}" ]; then
+            # 第2次运行：有验证码了
+            sudo apt-get install -y expect -qq
+            expect -c "
+              spawn fastlane spaceauth -u ${{ secrets.APPLE_ID }}
+              expect -re {[Cc]ode|[Ss]MS|[Tt]wo.?[Ff]actor}
+              send \"${{ inputs.sms_code }}\r\"
+              expect eof
+            " 2>&1 | tee /tmp/session_output.txt
+            echo "=== SESSION (copy this) ==="
+            grep -o "----.*----" /tmp/session_output.txt 2>/dev/null || \
+              sed -n '/export FASTLANE_SESSION/,/----/p' /tmp/session_output.txt
+          else
+            # 第1次运行：触发短信
+            echo "📱 正在触发 Apple 2FA 短信..."
+            echo "   APPLE_ID: $APPLE_ID"
+            timeout 30 fastlane spaceauth -u "$APPLE_ID" 2>&1 || true
+            echo "=== 下一步 ==="
+            echo "看到手机上收到验证码了吗？"
+            echo "去 GitHub → Actions → 重新运行这个 workflow"
+            echo "在 sms_code 输入框里填验证码"
+            exit 1
+          fi
