@@ -34,14 +34,12 @@ jobs:
           FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
           # 清除旧 Development Team 设置，让 Xcode 自动用免费证书
-          python3 -c "
-import re
-with open('ios/Runner.xcodeproj/project.pbxproj') as f:
-    c = f.read()
-c = re.sub(r'(DEVELOPMENT_TEAM\s*=\s*)[^;]+;', r'\1;', c)
-with open('ios/Runner.xcodeproj/project.pbxproj', 'w') as f:
-    f.write(c)
-"
+          python3 << 'PYEOF'
+          import re
+          c = open('ios/Runner.xcodeproj/project.pbxproj').read()
+          c = re.sub(r'(DEVELOPMENT_TEAM\s*=\s*)[^;]+;', r'\1;', c)
+          open('ios/Runner.xcodeproj/project.pbxproj', 'w').write(c)
+          PYEOF
           gem install fastlane --no-document 2>&1 | tail -1
           fastlane spaceauth -u "$APPLE_ID" 2>&1 || true
           flutter build ios --release
