@@ -28,21 +28,9 @@ jobs:
         run: |
           VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - name: 构建 iOS (免费证书自动签名)
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+      - name: 无签名构建 (诊断)
         run: |
-          # 清除旧 Development Team 设置，让 Xcode 自动用免费证书
-          python3 << 'PYEOF'
-          import re
-          c = open('ios/Runner.xcodeproj/project.pbxproj').read()
-          c = re.sub(r'(DEVELOPMENT_TEAM\s*=\s*)[^;]+;', r'\1;', c)
-          open('ios/Runner.xcodeproj/project.pbxproj', 'w').write(c)
-          PYEOF
-          gem install fastlane --no-document 2>&1 | tail -1
-          fastlane spaceauth -u "$APPLE_ID" 2>&1 || true
-          flutter build ios --release
+          flutter build ios --release --no-codesign
           cd build/ios/iphoneos
           mkdir -p Payload
           cp -r Runner.app Payload/
