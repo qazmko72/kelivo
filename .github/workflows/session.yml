@@ -4,19 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       sms_code:
-        description: '2FA code from your phone SMS'
+        description: '2FA code from phone SMS'
         required: false
-        default: ''
 
 jobs:
   auth:
     runs-on: macos-latest
     steps:
-      - name: Install fastlane
-        run: gem install fastlane --no-document
+      - run: gem install fastlane --no-document
 
-      - name: Generate session
-        id: session
+      - name: Run spaceauth
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
@@ -25,31 +22,47 @@ jobs:
           unset FASTLANE_SESSION 2>/dev/null || true
           export FASTLANE_PASSWORD="$APPLE_ID_PASSWORD"
           export FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD="$APP_SPECIFIC_PASSWORD"
+          brew install expect 2>/dev/null || true
 
           if [ -n "${{ inputs.sms_code }}" ]; then
-            # 第2次运行：有验证码了
-            brew install expect 2>/dev/null || true
+            # 2FA code provided — complete auth
             expect -c "
+              set timeout 60
               spawn fastlane spaceauth -u ${{ secrets.APPLE_ID }}
               expect -re {[Cc]ode|[Ss]MS|[Tt]wo.?[Ff]actor}
               send \"${{ inputs.sms_code }}\r\"
               expect eof
-            " 2>&1 | tee /tmp/session_output.txt
-            echo "=== SESSION (copy this) ==="
-            grep -o "----.*----" /tmp/session_output.txt 2>/dev/null || \
-              sed -n '/export FASTLANE_SESSION/,/----/p' /tmp/session_output.txt
+            " 2>&1 | tee /tmp/out.txt
           else
-            # 第1次运行：触发短信（macOS 没有 timeout 命令）
-            echo "📱 正在触发 Apple 2FA 短信..."
-            echo "   APPLE_ID: $APPLE_ID"
-            # 后台跑 spaceauth，等 20 秒后杀掉
-            fastlane spaceauth -u "$APPLE_ID" 2>&1 &
-            SPACE_PID=$!
-            sleep 20
-            kill $SPACE_PID 2>/dev/null || true
-            echo "=== 下一步 ==="
-            echo "看到手机上收到验证码了吗？"
-            echo "去 GitHub → Actions → 重新运行这个 workflow"
-            echo "在 sms_code 输入框里填验证码"
+            # First run — try without 2FA (app-specific password may bypass it)
+            expect -c "
+              set timeout 30
+              spawn fastlane spaceauth -u ${{ secrets.APPLE_ID }}
+              expect {
+                -re {[Cc]ode|[Ss]MS|[Tt]wo.?[Ff]actor} {
+                  puts \"===== 2FA REQUIRED =====\"
+                  send \"000000\r\"
+                  expect eof
+                }
+                timeout {
+                  puts \"===== TIMEOUT - NO 2FA PROMPT =====\"
+                }
+              }
+            " 2>&1 | tee /tmp/out.txt
+          fi
+
+          # Extract session
+          SESSION=$(grep -o "----.*----" /tmp/out.txt 2>/dev/null || true)
+          if [ -n "$SESSION" ]; then
+            echo "✅ SESSION FOUND!"
+            echo "FASTLANE_SESSION=$SESSION"
+          elif [ -n "${{ inputs.sms_code }}" ]; then
+            echo "❌ Still failed with code"
+            grep -i "error\|wrong\|invalid\|could not" /tmp/out.txt || true
+            exit 1
+          else
+            echo "📱 看手机有没有收到验证码"
+            echo "收到来这填 → github.com/qazmko72/kelivo/actions/workflows/session.yml"
+            grep "2FA REQUIRED\|credentials" /tmp/out.txt || true
             exit 1
           fi
