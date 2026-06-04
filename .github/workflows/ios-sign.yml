@@ -28,12 +28,22 @@ jobs:
         run: |
           VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - name: 构建 iOS (降级 image_cropper 解决 SPM 冲突)
+      - name: 构建 + 自动签名 IPA
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
-          # 降级 image_cropper 到 v11 (用 CocoaPods 而非 SPM)
+          # 降级 image_cropper 到 v11 (避免 SPM 依赖冲突)
           python3 -c "import re; p='pubspec.yaml'; c=open(p).read(); c=re.sub(r'image_cropper:.*','image_cropper: ^11.0.0',c); open(p,'w').write(c)"
           flutter pub get
-          flutter build ios --release --no-codesign
+
+          # 清除旧 Development Team，让 Xcode 自动用免费证书
+          python3 -c "import re; c=open('ios/Runner.xcodeproj/project.pbxproj').read(); open('ios/Runner.xcodeproj/project.pbxproj','w').write(re.sub(r\"(DEVELOPMENT_TEAM\s*=\s*)[^;]+;\",r'\\1;',c))"
+          gem install fastlane --no-document 2>&1 | tail -1
+          fastlane spaceauth -u "$APPLE_ID" 2>&1 || true
+
+          # 自动签名构建 (Xcode 会弹 Apple ID 登录，-allowProvisioningUpdates)
+          flutter build ios --release
           cd build/ios/iphoneos
           mkdir Payload
           cp -r Runner.app Payload/
