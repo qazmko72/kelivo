@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
       - uses: subosito/flutter-action@v2
         with:
-          channel: master
+          channel: stable
           cache: true
       - run: |
           mkdir -p lib/secrets
@@ -28,38 +28,32 @@ jobs:
         run: |
           VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - name: 构建 + 自动签名 IPA
+      - name: 构建 + 签名 IPA
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
         run: |
-          # 降级 image_cropper 到 v11 (避免 SPM 依赖冲突)
-          python3 -c "import re; p='pubspec.yaml'; c=open(p).read(); c=re.sub(r'image_cropper:.*','image_cropper: ^11.0.0',c); open(p,'w').write(c)"
+          # 降级 image_cropper 避免 SPM 冲突
+          python3 -c "import re;p='pubspec.yaml';c=open(p).read();c=re.sub(r'image_cropper:.*','image_cropper: ^11.0.0',c);open(p,'w').write(c)"
           flutter pub get
-
-          # 清除旧 Development Team，让 Xcode 自动用免费证书
-          python3 -c "import re; c=open('ios/Runner.xcodeproj/project.pbxproj').read(); open('ios/Runner.xcodeproj/project.pbxproj','w').write(re.sub(r\"(DEVELOPMENT_TEAM\s*=\s*)[^;]+;\",r'\\1;',c))"
+          # 清除旧 Development Team
+          python3 -c "import re;p='ios/Runner.xcodeproj/project.pbxproj';c=open(p).read();c=re.sub(r\"(DEVELOPMENT_TEAM\s*=\s*)[^;]+;\",r'\1;',c);open(p,'w').write(c)"
+          # fastlane 认证
           gem install fastlane --no-document 2>&1 | tail -1
           fastlane spaceauth -u "$APPLE_ID" 2>&1 || true
-
-          # 自动签名构建 (Xcode 会弹 Apple ID 登录，-allowProvisioningUpdates)
-          flutter build ios --release
-          cd build/ios/iphoneos
-          mkdir Payload
-          cp -r Runner.app Payload/
-          zip -r ../../../Kelivo_ios_${VERSION}.ipa Payload
-          cd ../../../
-      - name: 发布 Release（每 5 天自动续签）
-        if: ${{ github.event_name == 'schedule' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete ios/latest --cleanup-tag --yes 2>/dev/null || true
-          gh release create ios/latest \
-            --title "Kelivo iOS (自动续签)" \
-            --notes "每 5 天自动构建+签名。手机 Safari 打开此页面 → 下载 IPA → 设置里信任 → 安装" \
-            Kelivo_ios_*.ipa
-      - name: 上传构建产物
+          # flutter build ipa (自带签名)
+          flutter build ipa --release 2>&1 | tail -20
+          # 复制产物
+          cp build/ios/ipa/*.ipa Kelivo_ios_${VERSION}.ipa 2>/dev/null || {
+            echo "build ipa 失败，回落为无签名"
+            flutter build ios --release --no-codesign
+            cd build/ios/iphoneos
+            mkdir -p Payload
+            cp -r Runner.app Payload/
+            zip -r ../../../Kelivo_ios_${VERSION}.ipa Payload
+            cd ../../../
+          }
+      - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: iOS-IPA
